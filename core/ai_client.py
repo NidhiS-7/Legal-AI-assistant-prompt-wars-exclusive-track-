@@ -1,4 +1,4 @@
-"""Thin, testable wrapper around the Anthropic Claude API.
+"""Thin, testable wrapper around the Google Gemini API (free tier).
 
 Design goals:
 - All GenAI calls live in exactly one place, so rate limiting, retries,
@@ -7,6 +7,14 @@ Design goals:
   the UI layer; convert everything to AIClientError with a safe message.
 - Support long documents transparently by chunking + map-reduce style
   summarization, instead of failing once a doc exceeds context limits.
+
+Note on provider choice: Gemini's API (via Google AI Studio) offers a
+genuinely free tier with generous daily quotas and no credit card
+requirement, which is why it was chosen over paid-only alternatives for
+this submission. This uses the current `google-genai` SDK (the
+`google-generativeai` package it replaces is deprecated). Swapping
+providers only requires changes in this file - app.py and
+core/prompts.py are provider-agnostic.
 """
 
 from __future__ import annotations
@@ -14,12 +22,14 @@ from __future__ import annotations
 import os
 import time
 
-import anthropic
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 from core import prompts
 from core.chunker import chunk_text
 
-DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 MAX_OUTPUT_TOKENS = 2000
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
@@ -33,48 +43,61 @@ class AIClientError(Exception):
 
 class LegalAIClient:
     def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL):
-        api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        api_key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise AIClientError(
-                "No Anthropic API key configured. Set ANTHROPIC_API_KEY "
-                "in your environment or Streamlit secrets."
+                "No Google AI Studio API key configured. Get a free key at "
+                "https://aistudio.google.com/app/apikey and set "
+                "GOOGLE_API_KEY in your environment or Streamlit secrets."
             )
-        self._client = anthropic.Anthropic(api_key=api_key)
-        self._model = model
+        self._client = genai.Client(api_key=api_key)
+        self._model_name = model
+        self._config = genai_types.GenerateContentConfig(
+            system_instruction=prompts.SYSTEM_PROMPT,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+        )
 
     # ------------------------------------------------------------------
     # Low-level call with retry/backoff
     # ------------------------------------------------------------------
-    def _call(self, user_prompt: str, system: str = prompts.SYSTEM_PROMPT) -> str:
+    def _call(self, user_prompt: str) -> str:
         last_error: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._client.messages.create(
-                    model=self._model,
-                    max_tokens=MAX_OUTPUT_TOKENS,
-                    system=system,
-                    messages=[{"role": "user", "content": user_prompt}],
+                response = self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=user_prompt,
+                    config=self._config,
                 )
-                text_parts = [
-                    block.text for block in response.content
-                    if getattr(block, "type", None) == "text"
-                ]
-                return "\n".join(text_parts).strip()
-            except anthropic.RateLimitError as exc:
+                text = getattr(response, "text", None)
+                if text:
+                    return text.strip()
+                raise AIClientError(
+                    "The AI service returned no content for this request. "
+                    "This can happen if the document triggered a safety "
+                    "filter; try a different document or section."
+                )
+            except genai_errors.ClientError as exc:
+                # 4xx: includes rate limiting (429) on the free tier and
+                # bad-request errors. Retry only on rate limiting.
+                last_error = exc
+                if getattr(exc, "code", None) == 429:
+                    time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                    continue
+                break
+            except genai_errors.ServerError as exc:
                 last_error = exc
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-            except anthropic.APIStatusError as exc:
-                last_error = exc
-                if exc.status_code and exc.status_code < 500:
-                    break  # client error - retrying won't help
-                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+            except AIClientError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 break
 
         raise AIClientError(
             "The AI service could not complete this request right now. "
-            "Please try again in a moment."
+            "If you're on the free tier, you may have hit the per-minute "
+            "quota - please wait a moment and try again."
         ) from last_error
 
     # ------------------------------------------------------------------
