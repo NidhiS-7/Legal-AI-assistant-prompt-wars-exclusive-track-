@@ -109,7 +109,7 @@ for a domain like this:
 
 | Service | Where it's used | Purpose |
 |---|---|---|
-| **Anthropic Claude API** (`claude-sonnet-4-6`, via the official `anthropic` Python SDK) | `core/ai_client.py`, called from every one of the 6 task handlers in `app.py` | All natural-language understanding and generation: document simplification, risk/clause extraction, document comparison, grounded Q&A, checklist generation, and lawyer-consultation prep |
+| **GOOGLE API KEY | `core/ai_client.py`, called from every one of the 6 task handlers in `app.py` | All natural-language understanding and generation: document simplification, risk/clause extraction, document comparison, grounded Q&A, checklist generation, and lawyer-consultation prep |
 
 All prompt engineering (system prompt, task-specific instructions,
 grounding/anti-hallucination rules, and the "not legal advice" framing)
@@ -229,7 +229,7 @@ independently testable functions.
   found. Pinning the runtime to `3.11` — a version Pillow ships
   prebuilt wheels for — resolves the install without touching any
   application code.
-- Configured `ANTHROPIC_API_KEY` via the hosting platform's secrets
+- Configured `GOOGLE_API_KEY` via the hosting platform's secrets
   manager instead of a local `.env` file (local `.env` is git-ignored and
   never present in the deployed environment).
 - Set `MAX_UPLOAD_MB` via environment variable to match the platform's
