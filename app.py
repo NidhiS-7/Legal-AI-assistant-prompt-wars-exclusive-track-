@@ -41,11 +41,11 @@ st.set_page_config(
 # ----------------------------------------------------------------------
 def get_api_key() -> str | None:
     try:
-        if "ANTHROPIC_API_KEY" in st.secrets:
-            return st.secrets["ANTHROPIC_API_KEY"]
+        if "GOOGLE_API_KEY" in st.secrets:
+            return st.secrets["GOOGLE_API_KEY"]
     except Exception:
         pass
-    return os.environ.get("ANTHROPIC_API_KEY")
+    return os.environ.get("GOOGLE_API_KEY")
 
 
 @st.cache_resource(show_spinner=False)
