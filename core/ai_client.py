@@ -57,11 +57,11 @@ class LegalAIClient:
             max_output_tokens=MAX_OUTPUT_TOKENS,
         )
 
-    # ------------------------------------------------------------------
     # Low-level call with retry/backoff
-    # ------------------------------------------------------------------
     def _call(self, user_prompt: str) -> str:
         last_error: Exception | None = None
+        last_code: int | None = None
+
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 response = self._client.models.generate_content(
@@ -78,15 +78,19 @@ class LegalAIClient:
                     "filter; try a different document or section."
                 )
             except genai_errors.ClientError as exc:
-                # 4xx: includes rate limiting (429) on the free tier and
-                # bad-request errors. Retry only on rate limiting.
+                # 4xx: includes rate limiting (429), auth errors (401/403),
+                # bad model name / bad request (400/404). Only 429 is worth
+                # retrying - the rest won't succeed no matter how many times
+                # we try again.
                 last_error = exc
-                if getattr(exc, "code", None) == 429:
+                last_code = getattr(exc, "code", None)
+                if last_code == 429:
                     time.sleep(RETRY_BACKOFF_SECONDS * attempt)
                     continue
                 break
             except genai_errors.ServerError as exc:
                 last_error = exc
+                last_code = getattr(exc, "code", None)
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
             except AIClientError:
                 raise
@@ -94,11 +98,45 @@ class LegalAIClient:
                 last_error = exc
                 break
 
-        raise AIClientError(
-            "The AI service could not complete this request right now. "
-            "If you're on the free tier, you may have hit the per-minute "
-            "quota - please wait a moment and try again."
-        ) from last_error
+        raise AIClientError(self._friendly_message_for(last_code, last_error)) from last_error
+
+    @staticmethod
+    def _friendly_message_for(code: int | None, error: Exception | None) -> str:
+        """Turn a Gemini API error code into an actionable message, instead
+        of a single generic string that hides what actually went wrong."""
+        if code == 429:
+            return (
+                "You've hit the Gemini free-tier rate limit (too many "
+                "requests per minute, or the daily quota is used up). "
+                "Wait a minute and try again, or try again tomorrow if "
+                "you've hit the daily cap."
+            )
+        if code in (401, 403):
+            return (
+                "The Gemini API rejected this request as unauthorized. "
+                "Your GOOGLE_API_KEY is likely missing, invalid, or was "
+                "typed with extra characters/whitespace. Double-check the "
+                "key in Streamlit Secrets against "
+                "https://aistudio.google.com/app/apikey."
+            )
+        if code == 404:
+            return (
+                "The requested Gemini model was not found for this API "
+                "key/region. Try a different model via the GEMINI_MODEL "
+                "environment variable (e.g. 'gemini-1.5-flash')."
+            )
+        if code == 400:
+            return (
+                "The Gemini API rejected this request as malformed. This "
+                "can happen with unusual file content; try a different "
+                "document or a smaller excerpt."
+            )
+        return (
+            f"The AI service could not complete this request right now"
+            f"{f' (error code {code})' if code else ''}. Please try again "
+            f"in a moment. If this keeps happening, check the app logs "
+            f"for the underlying error: {error}"
+        )
 
     # ------------------------------------------------------------------
     # Long-document handling (map-reduce over chunks)
