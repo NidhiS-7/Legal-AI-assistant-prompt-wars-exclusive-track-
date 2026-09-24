@@ -1,22 +1,3 @@
-"""Thin, testable wrapper around the Google Gemini API (free tier).
-
-Design goals:
-- All GenAI calls live in exactly one place, so rate limiting, retries,
-  logging, and error handling are consistent everywhere they're used.
-- Never leak raw exceptions (which can include request internals) to
-  the UI layer; convert everything to AIClientError with a safe message.
-- Support long documents transparently by chunking + map-reduce style
-  summarization, instead of failing once a doc exceeds context limits.
-
-Note on provider choice: Gemini's API (via Google AI Studio) offers a
-genuinely free tier with generous daily quotas and no credit card
-requirement, which is why it was chosen over paid-only alternatives for
-this submission. This uses the current `google-genai` SDK (the
-`google-generativeai` package it replaces is deprecated). Swapping
-providers only requires changes in this file - app.py and
-core/prompts.py are provider-agnostic.
-"""
-
 from __future__ import annotations
 
 import os
@@ -56,10 +37,7 @@ class LegalAIClient:
             system_instruction=prompts.SYSTEM_PROMPT,
             max_output_tokens=MAX_OUTPUT_TOKENS,
         )
-
-    # ------------------------------------------------------------------
     # Low-level call with retry/backoff
-    # ------------------------------------------------------------------
     def _call(self, user_prompt: str) -> str:
         last_error: Exception | None = None
         last_code: int | None = None
@@ -139,10 +117,7 @@ class LegalAIClient:
             f"in a moment. If this keeps happening, check the app logs "
             f"for the underlying error: {error}"
         )
-
-    # ------------------------------------------------------------------
     # Long-document handling (map-reduce over chunks)
-    # ------------------------------------------------------------------
     def _process_long_document(self, document_text: str, prompt_builder) -> str:
         chunks = chunk_text(document_text, max_chars=SINGLE_CALL_CHAR_LIMIT)
         if len(chunks) == 1:
@@ -161,10 +136,7 @@ class LegalAIClient:
             "the section analyses below:\n\n" + combined
         )
         return self._call(reduce_prompt)
-
-    # ------------------------------------------------------------------
     # Public capabilities
-    # ------------------------------------------------------------------
     def simplify_document(self, document_text: str) -> str:
         return self._process_long_document(document_text, prompts.build_simplify_prompt)
 
