@@ -1,22 +1,3 @@
-"""Thin, testable wrapper around the Google Gemini API (free tier).
-
-Design goals:
-- All GenAI calls live in exactly one place, so rate limiting, retries,
-  logging, and error handling are consistent everywhere they're used.
-- Never leak raw exceptions (which can include request internals) to
-  the UI layer; convert everything to AIClientError with a safe message.
-- Support long documents transparently by chunking + map-reduce style
-  summarization, instead of failing once a doc exceeds context limits.
-
-Note on provider choice: Gemini's API (via Google AI Studio) offers a
-genuinely free tier with generous daily quotas and no credit card
-requirement, which is why it was chosen over paid-only alternatives for
-this submission. This uses the current `google-genai` SDK (the
-`google-generativeai` package it replaces is deprecated). Swapping
-providers only requires changes in this file - app.py and
-core/prompts.py are provider-agnostic.
-"""
-
 from __future__ import annotations
 
 import os
@@ -29,7 +10,7 @@ from google.genai import types as genai_types
 from core import prompts
 from core.chunker import chunk_text
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_OUTPUT_TOKENS = 2000
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
@@ -56,7 +37,6 @@ class LegalAIClient:
             system_instruction=prompts.SYSTEM_PROMPT,
             max_output_tokens=MAX_OUTPUT_TOKENS,
         )
-
     # Low-level call with retry/backoff
     def _call(self, user_prompt: str) -> str:
         last_error: Exception | None = None
@@ -160,9 +140,8 @@ class LegalAIClient:
         )
         return self._call(reduce_prompt)
 
-    # ------------------------------------------------------------------
     # Public capabilities
-    # ------------------------------------------------------------------
+
     def simplify_document(self, document_text: str) -> str:
         return self._process_long_document(document_text, prompts.build_simplify_prompt)
 
